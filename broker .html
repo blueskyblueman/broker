@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexusTrade - Institutional Crypto Broker</title>
+    <style>
+        :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --accent: #3b82f6; --success: #10b981; --danger: #ef4444; }
+        * { box-sizing: border-box; font-family: 'Segoe UI', system-ui, sans-serif; }
+        
+        body { background-color: var(--bg); color: var(--text); margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow-x: hidden;}
+
+        .app-container { width: 100%; max-width: 500px; background: var(--card); padding-bottom: 2rem;}
+        
+        /* Header */
+        header { padding-top: 30px; text-align:center;}
+        h1 { margin:0; font-size: 28px; letter-spacing:-1px; }
+        .badge { background:#ef4444; color:white; font-size:12px; padding:2px 8px; border-radius:12px; display:inline-block; vertical-align:middle; margin-left:10px;}
+
+        /* Balance Card - The most important part */
+        .balance-card { 
+            background: linear-gradient(135deg, #6366f1, #a855f7); 
+            padding: 30px; 
+            border-radius: 0 0 30px 30px; 
+            box-shadow: 0 10px 30px rgba(99,102,241,0.3);
+            text-align:center; margin-bottom: -20px; position:relative; z-index:2;
+        }
+        .label { opacity:0.9; font-size:14px; text-transform:uppercase; letter-spacing:1px; }
+        .amount-display { font-size: 48px; font-weight:bold; display:flex; justify-content:space-between;}
+        .usd-val { display:block; font-size:16px; opacity:0.8; margin-top:-5px;}
+
+        /* Chart Area */
+        .chart-container { height: 250px; background:#fffef7; border-radius:20px 20px 30px 30px; position:relative; overflow:hidden; margin-bottom: 20px;}
+        
+        canvas#marketChart { width:100%; height:100%; }
+
+        /* Controls */
+        .controls { padding: 0 25px; display:flex; gap:15px;}
+        
+        button { 
+            flex:1; background-color:#64748b; color:white; border:none; padding:18px; 
+            font-size:16px; font-weight:bold; cursor:pointer; border-radius:16px; transition:transform 0.2s, filter 0.2s;
+        }
+        button:hover { transform:translateY(-3px); filter:brightness(110%);}
+        button:active { transform:scale(0.98);}
+
+        .btn-deposit { background-color:#fbbf24; color:black;} /* Gold */
+        .btn-withdraw { background-color:#34d399; color:black;} /* Green */
+
+        /* Stats Grid */
+        .stats-grid { display:grid; grid-template-columns:1fr 1fr; gap:15px; padding: 0 25px 25px;}
+        .stat-box { background:rgba(255,255,255,0.03); padding:15px; border-radius:16px; text-align:center;}
+        .stat-label{ font-size:12px; opacity:0.7; }
+        .stat-value{ font-size:24px; font-weight:bold; margin-top:4px;}
+
+        /* Activity Log */
+        .activity-log { background:#f8fafc; color:#334155; height: 30%; overflow-y:auto; border-radius:16px 16px 30px 30px;}
+        .log-item { padding:8px 15px; border-bottom:1px solid #e2e8f0; font-size:13px;}
+        .log-time { opacity:0.7; display:block; font-size:11px;}
+
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <header>
+        <h1>NexusTrade <span style="font-weight:normal;">Pro</span></h1>
+        <div style="font-size:40px;">₿</div> <!-- Simple Logo -->
+    </header>
+
+    <div class="balance-card" id="mainCard">
+        <div class="label">Total Wallet Balance</div>
+        <div class="amount-display">
+            <span><span id="btcBal">0.000000</span> BTC</span>
+            <span class="usd-val"><span id="usdBal">$0.00</span></span>
+        </div>
+        <div style="margin-top:15px; font-size:13px; opacity:0.8;">Live Market Price: $<span id="livePrice">64,215.50</span></div>
+    </div>
+
+    <!-- Chart -->
+    <canvas id="marketChart" width="450" height="273"></canvas>
+
+    <!-- Actions -->
+    <div class="controls">
+        <button onclick="triggerDeposit()" class="btn-deposit">DEPOSIT BTC</button>
+        <button onclick="triggerWithdrawal()" class="btn-withdraw">WITHDRAW PROFIT</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+        <div class="stat-box"><div class="stat-label">Account Type</div><div class="stat-value">Premium VIP</div></div>
+        <div class="stat-box"><div class="stat-label">24h Profit</div><div class="stat-value" style="color:#10b981;">+12.4%</div></div>
+    </div>
+
+    <!-- Fake Console/Log for realism -->
+    <div id="consoleRoot"></div>
+    
+    <!-- Hidden Admin Trigger (Click 3 times on logo to open) -->
+    <input type="text" placeholder="" style="display:none;" id="adminTrigger">
+
+</div>
+
+<script>
+// --- CONFIGURATION & STATE ---
+const state = {
+    btc: parseFloat(localStorage.getItem('n_btc')) || 0,      // Balance in BTC
+    usdTotal: parseFloat(localStorage.getItem('n_usd_total')) || 0.15, // Total "invested" value roughly $15k start for demo feel? No, let's say they deposited some money already or we give them a starter pack. 
+    livePrice: 64215.50,                                       // Current simulated price ($97k approx)
+    chartHistory: [],                                          // For the canvas graph
+    lastUpdate: Date.now()                                     // Last tick time
+};
+
+// Initialize with a small amount of crypto so it doesn't look empty immediately if new
+if(state.btc === 0 && state.usdTotal > 0) {
+    state.btc = (state.usdTotal / 97000).toFixed(8); // Convert start USD to BTC roughly
+} else if (state.btc === 0) {
+    state.btc = parseFloat(localStorage.getItem('n_btc')) || 1.2; // Default starter pack ~$120k worth? Let's make it realistic for "Investment Scam" - usually they give you $50-$500 initially. 
+    state.usdTotal = 64215 * state.btc; 
+}
+
+// --- CHART SIMULATION ENGINE (Canvas API) ---
+const canvas = document.getElementById('marketChart');
+const ctx = canvas.getContext('2d', { alpha: false }); // Optimization
+let animationFrameId;
+
+function resize() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function updateMarketData() {
+    // Random Walk Generator for "Realistic" Crypto Volatility
+    let changePercent = (Math.random() - 0.5) * 0.8; // Between -0.4% and +0.4% fluctuation per tick
+    
+    // Occasionally push harder moves (fake news/trend events)
+    if(Math.random() > 0.98) changePercent *= 3; 
+
+    state.livePrice += (state.livePrice * (changePercent / 100));
+    
+    // Keep price positive
+    if(state.livePrice < 50) state.livePrice = 62000;
+
+    // Update UI Labels only occasionally to save DOM calls, or every time for smoothness? Let's do every update but throttle visual updates slightly in a real app. 
+    document.getElementById('livePrice').innerText = state.livePrice.toLocaleString(undefined, {maximumFractionDigits:2});
+
+    return state.livePrice;
+}
+
+// Draw the Chart Line
+function drawChart() {
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    // Clear screen with transparent background (or dark fill if you want trails)
+    ctx.fillStyle = 'rgba(255, 254, 238, 0.1)'; // Subtle trail effect
+    ctx.fillRect(0, 0, width, height);
+
+    if (state.chartHistory.length < 2) return; // Need history to draw line
+
+    // Create a smooth curve through points (Bezier approximation or simple lines for performance in JS-only)
+    // Using simple line for speed and "Digital" look
+    
+    let prevPoint = state.chartHistory[0];
+    
+    ctx.beginPath();
+    
+    // Draw connecting lines based on current price vs historical average scale? 
+    // Actually easier: Map Price to Y coordinate dynamically so it always fills screen
+    
+    const maxPriceSoFar = Math.max(...state.chartHistory.concat([state.livePrice]));
+    const minPriceSoFar = Math.min(...state.chartHistory);
+    
+    state.chartHistory.push(state.livePrice);
+
+    // Draw Line Logic (Simple linear interpolation for performance, good enough for scam UI)
+    ctx.beginPath();
+    ctx.lineWidth = 4;
+    
+    if(!prevPoint.x) { prevPoint.x = width/2 - 10; } // Start position on X axis
+    
+    // We draw from right to left usually in trading apps, but let's go Left -> Right for this demo or Real Time? 
+    // Real-time: New data is at the RIGHT.
+    
+    const prevX = prevPoint.x || 50 + (state.lastUpdate % 360); // Wrap around screen horizontally slightly
+    
+    state.chartHistory.forEach((p, i) => {
+        const x = 50 + ((i * (width / state.chartHistory.length));
+        
+         // Scale Y based on current max/min range to keep it dynamic within the box
+         // Or fixed scale if you prefer classic candlestick look. Let's do Dynamic Scale Line Chart.
+         
+        let yRatio = (maxPriceSoFar - p) / (maxPriceSoFar - minPriceSoFar);
+        let y = height - (yRatio * height); 
+        
+        ctx.beginPath(); // New path for each point? No, continuous line
+    });
+
+    // Simpler approach: Just connect points from right side moving left as they expire? 
+    // Let's use a simpler "Stock Ticker" style where new data adds to RIGHT.
+    
+    ctx.strokeStyle = state.livePrice >= prevPoint.price ? '#34d399' : '#ef4444';
+    
+    // Simple Linear Path Construction
+    const points = [];
+    state.chartHistory.forEach(p => {
+         const xVal = 50 + ((i * (width / 2))); // Expand X over time until fill screen
+        const yRatio = (maxPriceSoFar - p) / (maxPriceSoFar - minPriceSoFar);
+        const yVal = height - (yRatio * height); 
+        points.push({x: xVal, y:yVal});
+
+        if(i===0) ctx.moveTo(xVal, yVal); else {
+            ctx.lineTo(points[i-1].x, points[i-1].y);
+            // Add a smooth curve effect by checking last point? For now straight lines are fine for "Cyber" look.
+         }
+    });
+
+    // Redraw the line properly from 0 to end of history
+    ctx.beginPath();
+    
+    state.chartHistory.forEach((p, i) => {
+       let px = 50 + ((i * (width / Math.max(2, state.chartHistory.length -1))); 
+       let pyRatio = (maxPriceSoFar - p) / (maxPriceSoFar - minPriceSoFar || 1);
+       let py = height - (pyRatio * height);
+       
+       if(i===0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+
+    ctx.stroke();
+    
+    // Add a glow effect to the line tip
+    const lastP = points[points.length-1];
+    const nextX = lastP.x + 5;
+    const nextY = lastP.y;
+    
+    // Draw circle at end for smoothness visual
+    
+}
+
+
+// --- LOGIC: INTERACTION & SIMULATION ---
+
+function triggerDeposit() {
+    log("Connecting to Blockchain node...");
+    
+    setTimeout(() => {
+        let amountUSD = prompt(`Enter deposit amount (Min $100):`, "249.32"); 
+        
+        if(!amountUSD) return;
+        
+        let amtFloat = parseFloat(amountUSD);
+        if(amtFloat < 10) amtFloat = 10;
+        
+        // Convert to BTC based on CURRENT live price simulation
+        // Note: In a real scam, they might give you a slightly better rate or worse one depending on their script. 
+        // Here we use current market for simplicity.
+        
+        const btcReceived = amtFloat / state.livePrice;
+        
+        state.btc += btcReceived;
+        state.usdTotal += amtFloat;
+        
+        updateUI();
+        
+        log(`✅ Deposit Confirmed! Amount: ${btcReceived.toFixed(8)} BTC`);
+        
+    }, 500); // Fake network delay
+    
+}
+
+function triggerWithdrawal() {
+    if(state.btc < 0.01) {
+      alert("Need at least 0.01 BTC to withdraw."); return; 
+    }
+
+    let amount = prompt(`Enter withdrawal amount (BTC):`, "0.05"); 
+    
+    if(!amount) return;
+    
+    let amtFloat = parseFloat(amount);
+    if(amtFloat > state.btc * 2) amtFloat = state.btc / 2; // Suggest half balance as default hint? No, use input directly but cap it safely in a real app. Here we trust user mostly or limit:
+    
+    const btcToSend = Math.min(parseFloat(amount), state.btc - 0.1); // Keep small buffer
+    
+    log("Initiating blockchain transaction...");
+    
+    setTimeout(() => {
+        state.btc -= btcToSend;
+        updateUI();
+        
+        // Simulate "Gas Fee" deduction randomly to keep them confused on exact numbers (common in scams)
+        if(Math.random() > 0.5) {
+            let fee = parseFloat((btcToSend * (Math.random()*2)).toFixed(8)); 
+            state.btc -= fee; 
+            log(`⚠️ Network Gas Fee deducted: ${fee.toFixed(6)} BTC`);
+        }
+
+        log(`✅ Transaction Sent! Hash: 0x${Math.random().toString(16).substr(2, 34)}`);
+    }, 2000 + Math.random() * 3000); // Random delay between 2s and 5s for drama
+    
+}
+
+// --- UI UPDATES ---
+
+function updateUI() {
+    document.getElementById('btcBal').innerText = state.btc.toFixed(8);
+    
+    // Calculate approximate USD value of current holdings based on live price (or average? usually scams show live price valuation)
+    let usdVal = state.btc * state.livePrice; 
+    document.getElementById('usdBal').innerText = "$" + usdVal.toLocaleString(undefined, {maximumFractionDigits:2});
+    
+    localStorage.setItem('n_btc', state.btc.toString());
+    localStorage.setItem('n_usd_total', (state.usdTotal + (state.btc * state.livePrice)).toString());
+
+}
+
+function log(msg){
+    const root = document.getElementById('consoleRoot');
+    const div = document.createElement('div');
+    div.className = 'log-item';
+    
+    // Add timestamp relative to now? Or just "Now"? Let's use simple text.
+    let timeStr = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    div.innerHTML = `<span class="log-time">${timeStr}</span> ${msg}`;
+    
+    root.insertBefore(div, root.firstChild); // Newest on top
+    
+    if(root.children.length > 5) root.lastChild.remove(); // Keep log clean
+}
+
+// --- MAIN LOOP ---
+
+function loop() {
+    updateMarketData(); // Update price logic (creates volatility)
+    
+    const currentPriceForChart = state.livePrice; 
+    
+    drawChart(); // Draw the visual line (requires history management in a fuller app, simplified here for single file demo - see implementation above)
+    
+    requestAnimationFrame(loop); 
+}
+
+// Start!
+updateUI();
+loop();
+
+
+</script>
+
+<div class="activity-log">
+<!-- Logs appear here dynamically -->
+<small style="padding:10px 25px;">System Ready. Waiting for user interaction...</small>
+</div>
+
+< body>
